@@ -7,7 +7,7 @@
 		]
 	},
 	{
-		"reason": "Closed-source binaries | Possible spyware",
+		"reason": "Possible spyware | Closed-source binaries",
 		"severity": "high",
 		"patterns": [
 			"root phantom fateh",
@@ -31,15 +31,7 @@
 		]
 	},
 	{
-		"reason": "Possible data corruption | Possible bootloop | Break other modules | Signs of ai-generated code",
-		"severity": "high",
-		"patterns": [
-			"zeromount",
-			"meta-zeromount"
-		]
-	},
-	{
-		"reason": "Brick-level commands | Destroys system partitions | Author known for bricking devices",
+		"reason": "Brick-level commands | Destroys system partitions",
 		"severity": "extreme",
 		"patterns": [
 			"fakelook1337",
