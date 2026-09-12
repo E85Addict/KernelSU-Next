@@ -36,7 +36,10 @@ use crate::module::ModuleType::{Active, All};
 use std::os::unix::{prelude::PermissionsExt, process::CommandExt};
 
 const INSTALLER_CONTENT: &str = include_str!("./installer.sh");
-const RISK: &str = include_str!("../risk.json");
+const DEFAULT_RISK_JSON: &str = include_str!("../../../risk/risk.json");
+const REMOTE_RISK_URL: &str =
+    "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/risk/risk/risk.json";
+const RISK_CACHE_PATH: &str = concatcp!(defs::WORKING_DIR, "risk.json");
 const INSTALL_MODULE_SCRIPT: &str = concatcp!(
     INSTALLER_CONTENT,
     "\n",
@@ -146,9 +149,83 @@ struct RiskMatch {
     severity: RiskSeverity,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct RiskCatalog {
+    hash: String,
+    rules: Vec<RiskGroup>,
+}
+
+fn parse_risk_catalog(json: &[u8]) -> Result<RiskCatalog, serde_json::Error> {
+    serde_json::from_slice(json)
+}
+
+fn should_update_risk_cache(local_json: &[u8], remote_json: &[u8]) -> bool {
+    let Ok(local) = parse_risk_catalog(local_json) else {
+        return true;
+    };
+    let Ok(remote) = parse_risk_catalog(remote_json) else {
+        return true;
+    };
+
+    local.hash != remote.hash
+}
+
+fn fetch_remote_risk_json() -> Option<Vec<u8>> {
+    let output = Command::new(assets::BUSYBOX_PATH)
+        .args(["wget", "-q", "-O", "-", "--", REMOTE_RISK_URL])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        warn!("Failed to fetch risk rules from {REMOTE_RISK_URL}");
+        return None;
+    }
+
+    Some(output.stdout)
+}
+
+fn load_risk_json() -> Vec<u8> {
+    let cache_path = Path::new(RISK_CACHE_PATH);
+    if let Err(err) = ensure_dir_exists(defs::WORKING_DIR) {
+        warn!("Failed to ensure risk cache dir exists: {err}");
+    }
+
+    let local_bytes = std::fs::read(cache_path).ok();
+    let remote_bytes = fetch_remote_risk_json();
+
+    match (local_bytes, remote_bytes) {
+        (Some(local), Some(remote)) => {
+            if should_update_risk_cache(&local, &remote) {
+                if let Err(err) = std::fs::write(cache_path, &remote) {
+                    warn!("Failed to update risk cache at {}: {err}", cache_path.display());
+                }
+                remote
+            } else {
+                local
+            }
+        }
+        (Some(local), None) => local,
+        (None, Some(remote)) => {
+            if let Err(err) = std::fs::write(cache_path, &remote) {
+                warn!("Failed to write risk cache at {}: {err}", cache_path.display());
+            }
+            remote
+        }
+        (None, None) => DEFAULT_RISK_JSON.as_bytes().to_vec(),
+    }
+}
+
 fn contains_risk(module_prop: &str) -> Option<RiskMatch> {
-    let risk: Vec<RiskGroup> = serde_json::from_str(RISK)
-        .expect("risk rule list must contain valid JSON");
+    let risk_json = load_risk_json();
+    let risk: Vec<RiskGroup> = match parse_risk_catalog(&risk_json) {
+        Ok(catalog) => catalog.rules,
+        Err(err) => {
+            warn!("Failed to parse risk catalog from cache: {err}. Falling back to bundled rules.");
+            serde_json::from_str::<RiskCatalog>(DEFAULT_RISK_JSON)
+                .map(|catalog| catalog.rules)
+                .unwrap_or_default()
+        }
+    };
 
     let normalized_properties: Vec<String> = normalize_risk_text(module_prop)
         .split_whitespace()
@@ -194,6 +271,21 @@ fn normalize_risk_text(text: &str) -> String {
             }
         })
         .collect::<String>()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn risk_cache_diff_detects_change() {
+        let local = br#"{"hash":"abc","rules":[{"reason":"demo","severity":"low","patterns":["alpha"]}]}"#;
+        let remote_same = br#"{"hash":"abc","rules":[{"reason":"demo","severity":"low","patterns":["alpha"]}]}"#;
+        let remote_diff = br#"{"hash":"def","rules":[{"reason":"demo","severity":"low","patterns":["beta"]}]}"#;
+
+        assert!(!should_update_risk_cache(local, remote_same));
+        assert!(should_update_risk_cache(local, remote_diff));
+    }
 }
 
 #[derive(PartialEq, Eq)]
