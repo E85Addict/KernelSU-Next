@@ -575,7 +575,13 @@ private fun AppSettingsCard(
                     ),
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                     leadingContent = { Icon(Icons.Filled.Lock, null) },
-                    headlineContent = { Text(stringResource(R.string.settings_app_lock)) },
+                    headlineContent = {
+                        Text(
+                            text = stringResource(R.string.settings_app_lock),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    },
                     supportingContent = {
                         Column(modifier = Modifier.animateContentSize()) {
                             Text(stringResource(R.string.settings_app_lock_summary))
